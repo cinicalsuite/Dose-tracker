@@ -2508,6 +2508,8 @@ function cleanBool(val) {
   return ['true', '1', 'yes'].includes(String(val).trim().toLowerCase());
 }
 
+// Replace your importCSVFile function with this debug version:
+
 function importCSVFile(file) {
   function doImport(text) {
     const rawRows = text.split(/\r?\n/);
@@ -2517,10 +2519,14 @@ function importCSVFile(file) {
     }
     
     const rawHeaders = parseCSVRow(rawRows[0]);
+    console.log('CSV Headers found:', rawHeaders);
+    
     const headers = rawHeaders.map(h => {
       const clean = h.trim().toLowerCase();
       return COL_MAP[clean] || clean;
     });
+    
+    console.log('Mapped headers:', headers);
 
     let added = 0, skipped = 0, failed = 0;
     setLoading(true, 'Importing CSV…');
@@ -2548,39 +2554,54 @@ function importCSVFile(file) {
             continue;
           }
 
+          // Clean and validate data types
           const dose = cleanDose(p['Dose Prescribed']) || '22.5';
           const totalDoses = parseInt(p['Total Doses']) || 4;
-          const remainingDoses = parseInt(p['Doses Remaining']) || totalDoses;
+          const remainingDoses = parseInt(p['Doses Remaining']) !== NaN ? parseInt(p['Doses Remaining']) : totalDoses;
           const dueDate = cleanDate(p['Due Date']) || todayStr();
           
+          // Format phone numbers (remove spaces, keep digits)
+          const phone1 = (p['Phone 1'] || '').replace(/\s/g, '');
+          const phone2 = (p['Phone 2'] || '').replace(/\s/g, '');
+          
+          // Build the data object for Supabase
+          const insertData = {
+            patient_name: name,
+            file_number: fileNum,
+            address: p['Address'] || '',
+            phone1: phone1,
+            phone2: phone2,
+            dose_prescribed: parseFloat(dose),
+            total_doses: totalDoses,
+            doses_remaining: remainingDoses,
+            injection_site: p['Injection Site'] || null,
+            previous_injection_site: p['Previous Injection Site'] || null,
+            due_date: dueDate,
+            appointment_date_time: p['Appointment Date & Time'] ? cleanDate(p['Appointment Date & Time']) : null,
+            previous_injection_dates: p['Previous Injection Dates'] || null,
+            assignment_type: p['Assignment Type'] || 'Permanent',
+            special_instructions: p['Special Instructions'] || null,
+            adverse_effects_comments: p['Adverse Effects Comments'] || null,
+            file_status: 'Active',
+            injection_administered: cleanBool(p['Injection Administered']),
+            appointment_confirmed: cleanBool(p['Appointment Confirmed']),
+            pending: cleanBool(p['Pending']),
+            archived: cleanBool(p['Archived']),
+            cpp_patient: cleanBool(p['CPP Patient'])
+          };
+          
+          console.log(`Row ${i} data being sent:`, insertData);
+          
           try {
-            await dbInsert({
-              'Patient Name': name,
-              'File Number': fileNum,
-              'Address': p['Address'] || '',
-              'Phone 1': p['Phone 1'] || '',
-              'Phone 2': p['Phone 2'] || '',
-              'Dose Prescribed': dose,
-              'Total Doses': totalDoses,
-              'Doses Remaining': remainingDoses,
-              'Injection Site': p['Injection Site'] || '',
-              'Previous Injection Site': p['Previous Injection Site'] || '',
-              'Due Date': dueDate,
-              'Appointment Date & Time': p['Appointment Date & Time'] ? cleanDate(p['Appointment Date & Time']) : null,
-              'Previous Injection Dates': p['Previous Injection Dates'] || '',
-              'Assignment Type': p['Assignment Type'] || 'Permanent',
-              'Special Instructions': p['Special Instructions'] || '',
-              'Adverse Effects Comments': p['Adverse Effects Comments'] || '',
-              'File Status': 'Active',
-              'Injection Administered': cleanBool(p['Injection Administered']),
-              'Appointment Confirmed': cleanBool(p['Appointment Confirmed']),
-              'Pending': cleanBool(p['Pending']),
-              'Archived': cleanBool(p['Archived']),
-              'CPP Patient': cleanBool(p['CPP Patient']),
-            });
+            const { data, error } = await _sb.from('patients').insert([insertData]).select();
+            if (error) {
+              console.error(`Supabase error on row ${i}:`, error);
+              throw error;
+            }
             added++;
+            console.log(`Row ${i} inserted successfully:`, data);
           } catch(rowErr) {
-            console.warn(`Row ${i} failed:`, rowErr);
+            console.error(`Row ${i} failed:`, rowErr);
             failed++;
           }
         }
@@ -2603,6 +2624,7 @@ function importCSVFile(file) {
   reader.onload = e => doImport(e.target.result);
   reader.onerror = () => toast('Failed to read file', 'error');
   reader.readAsText(file, 'UTF-8');
+};
 }
 
 async function importPDFFile(file) {
